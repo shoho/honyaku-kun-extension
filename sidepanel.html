@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>翻訳くん</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <div class="app">
+      <!-- 翻訳ビュー -->
+      <main id="translateView" class="view">
+        <!-- 方向切り替え -->
+        <div class="direction">
+          <button class="lang-pill" id="sourceLang">✨ 自動判定</button>
+          <button id="swapBtn" class="swap-btn" title="入れ替え" aria-label="言語を入れ替え">
+            🔄
+          </button>
+          <button class="lang-pill" id="targetLang">🌐 自動</button>
+          <button id="settingsBtn" class="icon-btn" title="設定" aria-label="設定">
+            ⚙️
+          </button>
+        </div>
+
+        <!-- ニュアンス（チップは sidepanel.js が TONES から描画） -->
+        <div class="tone-select" id="toneSelect" role="group" aria-label="ニュアンス"></div>
+
+        <!-- 入力 -->
+        <section class="panel input-panel">
+          <textarea
+            id="inputText"
+            class="text-area"
+            placeholder="翻訳したいテキストを入力…"
+            autofocus
+          ></textarea>
+        </section>
+
+        <!-- 翻訳ボタン -->
+        <button id="translateBtn" class="primary-btn">
+          <span class="btn-label">翻訳する</span>
+          <span class="btn-emoji">✈️</span>
+          <span class="spinner" hidden></span>
+        </button>
+
+        <!-- 出力（結果＋学習メモをまとめて縦スクロール） -->
+        <div class="results">
+          <section class="panel output-panel">
+            <div class="panel-head">
+              <span id="resultTitle">🎉 翻訳結果</span>
+              <span id="targetLabel" class="out-lang">🌐</span>
+            </div>
+            <div id="outputText" class="text-area output" aria-live="polite" tabindex="0"></div>
+            <div class="panel-foot">
+              <span class="hint">Gemini が翻訳します 🤖</span>
+              <button id="copyBtn" class="ghost-btn" title="コピー" disabled>📋 コピー</button>
+            </div>
+          </section>
+
+          <!-- 学習メモ（タイトルなし・合計3つ程度の箇条書き） -->
+          <section id="insightsPanel" class="panel insights-panel" hidden>
+            <ul id="insightList" class="insight-list"></ul>
+          </section>
+
+          <div id="errorBox" class="error-box" hidden></div>
+        </div>
+      </main>
+
+      <!-- 設定ビュー -->
+      <section id="settingsView" class="view" hidden>
+        <h2 class="settings-title">⚙️ 設定</h2>
+
+        <label class="field">
+          <span class="field-label">🔑 Gemini API キー</span>
+          <input
+            id="apiKeyInput"
+            type="password"
+            class="text-input"
+            placeholder="AIza..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <span class="field-hint">
+            Google AI Studio で取得できます。キーはこの端末のブラウザ内
+            (chrome.storage.local) にのみ保存され、外部には送信されません。🔒
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-label">🤖 モデル</span>
+          <input
+            id="modelInput"
+            type="text"
+            class="text-input"
+            placeholder="gemini-3.1-flash-lite"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <span class="field-hint">
+            例: gemini-3.1-flash-lite / gemini-flash-latest / gemini-2.5-flash
+          </span>
+        </label>
+
+        <div class="settings-actions">
+          <button id="saveSettingsBtn" class="primary-btn small">
+            <span class="btn-label">保存</span><span class="btn-emoji">💾</span>
+          </button>
+          <button id="backBtn" class="ghost-btn">← 戻る</button>
+        </div>
+        <div id="settingsMsg" class="settings-msg" hidden></div>
+
+        <p class="apilink">
+          🔗 API キーの取得:
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener"
+            >Google AI Studio</a
+          >
+        </p>
+      </section>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
