@@ -87,6 +87,17 @@
         <h2 class="settings-title">⚙️ 設定</h2>
 
         <label class="field">
+          <span class="field-label">🗣️ 母国語（学習メモの解説に使う言語）</span>
+          <select id="nativeLangSelect" class="text-input">
+            <option value="ja">日本語</option>
+            <option value="en">English</option>
+          </select>
+          <span class="field-hint">
+            学習メモは母国語で書き、もう一方の言語（学習対象）の表現を解説します。
+          </span>
+        </label>
+
+        <label class="field">
           <span class="field-label">🔑 Gemini API キー</span>
           <input
             id="apiKeyInput"
