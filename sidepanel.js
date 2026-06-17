@@ -166,6 +166,7 @@ const state = {
   proofScene: "general", // 添削モードのシーン（PROOF_SCENES のキー）
   proofLevel: DEFAULT_PROOF_LEVEL, // 添削モードの距離感（PROOF_LEVELS の添字）
   lastResult: null, // 直近の結果 {translation, keyExpressions, alternatives, notes}（引き継ぎ用）
+  nativeLang: "ja", // 母国語（学習メモの解説に使う言語）"ja" | "en"
   apiKey: "",
   model: DEFAULT_MODEL,
   busy: false,
@@ -196,6 +197,7 @@ const els = {
   insightList: $("insightList"),
   apiKeyInput: $("apiKeyInput"),
   modelInput: $("modelInput"),
+  nativeLangSelect: $("nativeLangSelect"),
   saveSettingsBtn: $("saveSettingsBtn"),
   settingsMsg: $("settingsMsg"),
   btnLabel: document.querySelector("#translateBtn .btn-label"),
@@ -549,15 +551,19 @@ function buildSystemInstruction(from, to, mode) {
       ? `Provide up to 5 learning bullets IN TOTAL across the three sections combined (fewer is fine)`
       : `Provide about 3 learning bullets IN TOTAL across the three sections combined`;
 
+  // 学習メモは母国語で書き、もう一方（学習対象）の言語の表現を解説する
+  const nativeName = LANG[state.nativeLang].name;
+
   return (
     mainTask +
-    `\n\n2) Learning notes, written in Japanese for the user:\n` +
-    `- keyExpressions: characteristic or genuinely useful expressions worth remembering. ` +
-    `Each bullet like "表現 — 日本語での意味やニュアンス".\n` +
+    `\n\n2) Learning notes for a native ${nativeName} speaker who is studying the other language. ` +
+    `Write every note in ${nativeName}:\n` +
+    `- keyExpressions: useful expressions worth remembering, taken from the language that is NOT ${nativeName} ` +
+    `(the one being learned). Each bullet pairs that expression with a short ${nativeName} note on its meaning or nuance.\n` +
     `- alternatives: other natural ways to express the same thing.\n` +
     `- notes: any other helpful commentary (nuance, grammar, register, what was improved, cultural points).\n\n` +
     `Rules (follow exactly):\n` +
-    `- Write every learning-note bullet in Japanese, kept short.\n` +
+    `- Write every learning-note bullet in ${nativeName}, kept short.\n` +
     `- ${noteGuidance} — not that many per section. ` +
     `Distribute them however is most useful: they may all sit in one section, ` +
     `or be spread across sections. Put each bullet in whichever section fits best, and leave the other arrays empty.\n` +
@@ -685,6 +691,7 @@ function openSettings() {
   els.settingsView.hidden = false;
   els.apiKeyInput.value = state.apiKey;
   els.modelInput.value = state.model;
+  els.nativeLangSelect.value = state.nativeLang;
   els.settingsMsg.hidden = true;
 }
 function closeSettings() {
@@ -694,9 +701,11 @@ function closeSettings() {
 async function saveSettings() {
   const apiKey = sanitizeKey(els.apiKeyInput.value);
   const model = els.modelInput.value.trim() || DEFAULT_MODEL;
+  const nativeLang = els.nativeLangSelect.value === "en" ? "en" : "ja";
   state.apiKey = apiKey;
   state.model = model;
-  await chrome.storage.local.set({ apiKey, model });
+  state.nativeLang = nativeLang;
+  await chrome.storage.local.set({ apiKey, model, nativeLang });
   els.settingsMsg.textContent = "保存しました。";
   els.settingsMsg.className = "settings-msg ok";
   els.settingsMsg.hidden = false;
@@ -704,16 +713,18 @@ async function saveSettings() {
 }
 
 async function loadSettings() {
-  const { apiKey, model, tone, proofScene, proofLevel } =
+  const { apiKey, model, nativeLang, tone, proofScene, proofLevel } =
     await chrome.storage.local.get([
       "apiKey",
       "model",
+      "nativeLang",
       "tone",
       "proofScene",
       "proofLevel",
     ]);
   state.apiKey = apiKey || "";
   state.model = model || DEFAULT_MODEL;
+  if (nativeLang === "ja" || nativeLang === "en") state.nativeLang = nativeLang;
   // 保存値を検証して復元（無効値は既定のまま）
   applyValidatedSelection({ tone, proofScene, proofLevel });
 }
@@ -783,6 +794,7 @@ function bindEvents() {
     if (area !== "local") return;
     if (changes.apiKey) state.apiKey = changes.apiKey.newValue || "";
     if (changes.model) state.model = changes.model.newValue || DEFAULT_MODEL;
+    if (changes.nativeLang) state.nativeLang = changes.nativeLang.newValue || "ja";
     if (changes.pendingText && changes.pendingText.newValue) consumePendingText();
   });
 }
