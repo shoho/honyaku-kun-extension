@@ -51,7 +51,82 @@ const TONES = {
       "Use a neutral, journalistic tone — not a casual chat style and without email-style greetings.",
   },
 };
-const DEFAULT_TONE = "chat";
+// 翻訳モードのトーン（先頭＝既定。TONES の部分集合・並び替え）
+const TRANSLATE_TONE_KEYS = ["general", "chat", "colleague", "boss", "article"];
+
+// 添削モードのシーン（一般／チャット／メール）。chat/mail は距離感5段階つき
+const PROOF_SCENES = {
+  general: {
+    emoji: "✨",
+    label: "一般",
+    title: "場面を限定せず、自然で読みやすい文章に整える",
+    instruction:
+      "Polish it into natural, clear, and generally appropriate {lang}, " +
+      "without assuming a specific medium or relationship.",
+    levels: false,
+  },
+  chat: {
+    emoji: "💬",
+    label: "チャット",
+    title: "チャット向け。相手との距離感を5段階で選べます",
+    instruction:
+      "Rewrite it as a chat / instant message: conversational and concise, " +
+      "minimal line breaks, and no email-style greetings or sign-offs.",
+    levels: true,
+  },
+  mail: {
+    emoji: "✉️",
+    label: "メール",
+    title: "メール向け。相手との距離感を5段階で選べます",
+    instruction:
+      "Rewrite it as an email, with a greeting and closing appropriate to the relationship.",
+    levels: true,
+  },
+};
+
+// チャット/メールの相手との距離感（5段階。既定は中央＝一般）
+const PROOF_LEVELS = [
+  {
+    emoji: "😎",
+    label: "ごく親しい",
+    title: "後輩やすごく仲がいい同僚・友人",
+    instruction:
+      "Audience: a junior or a very close colleague/friend. Use a very casual, warm, " +
+      "friendly register — relaxed and informal wording is welcome.",
+  },
+  {
+    emoji: "🙂",
+    label: "親しい",
+    title: "会ったことがある比較的知っている同僚・友人",
+    instruction:
+      "Audience: a colleague/friend you already know fairly well. " +
+      "Use a casual but considerate register.",
+  },
+  {
+    emoji: "😐",
+    label: "一般",
+    title: "会ったこともない同僚やお客さん（一般）",
+    instruction:
+      "Audience: someone you have not met (a general colleague or customer). " +
+      "Use a neutral, polite register.",
+  },
+  {
+    emoji: "🙇",
+    label: "上司・お客様",
+    title: "上司やお客さま",
+    instruction:
+      "Audience: a manager or a customer. Use a polite, respectful register.",
+  },
+  {
+    emoji: "🎩",
+    label: "役員・要人",
+    title: "相当偉い人やお客さんの偉い人",
+    instruction:
+      "Audience: a senior executive or a VIP client. " +
+      "Use a highly formal, deferential register.",
+  },
+];
+const DEFAULT_PROOF_LEVEL = 2; // 一般
 
 // 翻訳結果が空のときのプレースホルダ（HTML 側と重複させない単一の定義）
 const OUTPUT_PLACEHOLDER = "💭 ここに翻訳結果が表示されます";
@@ -71,18 +146,26 @@ const opposite = (lang) => (lang === "ja" ? "en" : "ja");
 // 翻訳 / 校正（同一言語）の2モードの表示文言を1か所に集約
 const MODES = {
   translate: { action: "翻訳する", busy: "翻訳中…", title: "🎉 翻訳結果", placeholder: "✈️ 翻訳中…" },
-  proofread: { action: "校正する", busy: "校正中…", title: "✨ 校正結果", placeholder: "✨ 校正中…" },
+  proofread: { action: "添削する", busy: "添削中…", title: "✍️ 添削・校正結果", placeholder: "✍️ 添削中…" },
 };
-const modeKey = (from, to) => (from === to ? "proofread" : "translate");
 
 // 方向ピルの巡回順
 const CYCLE_ORDER = ["auto", "en", "ja"];
 
+// ポップアップウィンドウとして開かれているか（?window=1）と、元のサイドパネルのウィンドウID
+const URL_PARAMS = new URLSearchParams(location.search);
+const IS_POPOUT = URL_PARAMS.get("window") === "1";
+const OWNER_WINDOW_ID = Number(URL_PARAMS.get("owner")) || null;
+
 // ===== 状態 =====
 const state = {
+  task: "translate", // "translate"（翻訳） | "proofread"（添削・校正）
   source: "auto", // "auto" | "ja" | "en"
   target: "auto", // "auto"(=元の反対) | "ja" | "en"
-  tone: DEFAULT_TONE, // TONES のキー（chat/colleague/boss/general/article）
+  tone: "general", // 翻訳モードのトーン（TONES のキー）
+  proofScene: "general", // 添削モードのシーン（PROOF_SCENES のキー）
+  proofLevel: DEFAULT_PROOF_LEVEL, // 添削モードの距離感（PROOF_LEVELS の添字）
+  lastResult: null, // 直近の結果 {translation, keyExpressions, alternatives, notes}（引き継ぎ用）
   apiKey: "",
   model: DEFAULT_MODEL,
   busy: false,
@@ -98,7 +181,10 @@ const els = {
   sourceLang: $("sourceLang"),
   targetLang: $("targetLang"),
   swapBtn: $("swapBtn"),
+  popoutBtn: $("popoutBtn"),
+  taskTabs: $("taskTabs"),
   toneSelect: $("toneSelect"),
+  proofLevels: $("proofLevels"),
   inputText: $("inputText"),
   outputText: $("outputText"),
   translateBtn: $("translateBtn"),
@@ -134,18 +220,13 @@ function detectLang(text) {
     : "en";
 }
 
-// source/target 設定から元・先を解決する（from===to なら校正モード相当）
+// モード・言語設定から元/先を解決する
+// 翻訳: from=元言語, to=先言語 ／ 校正: from=to=対象言語（同一言語を整える）
 function resolveDirection(text) {
-  const from = state.source === "auto" ? detectLang(text) : state.source;
-  const to = state.target === "auto" ? opposite(from) : state.target;
-  return { from, to };
-}
-
-// 操作前のモード推定（元・先が確定して一致していれば校正、autoを含めば翻訳扱い）
-function pendingMode() {
-  return state.source !== "auto" && state.source === state.target
-    ? "proofread"
-    : "translate";
+  const lang = state.source === "auto" ? detectLang(text) : state.source;
+  if (state.task === "proofread") return { from: lang, to: lang };
+  const to = state.target === "auto" ? opposite(lang) : state.target;
+  return { from: lang, to };
 }
 
 // テキストエリアを内容に合わせて自動で高さ調整（上限あり）
@@ -159,13 +240,35 @@ function autoGrow(el) {
 }
 
 // ===== UI 更新 =====
+function renderTask() {
+  els.taskTabs.querySelectorAll(".task-tab").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.task === state.task);
+  });
+  const proof = state.task === "proofread";
+  // 校正モードは言語を1つだけ選ぶので、入れ替え・先言語ピルは隠す
+  els.swapBtn.hidden = proof;
+  els.targetLang.hidden = proof;
+  els.inputText.placeholder = proof
+    ? "添削・校正したいテキストを入力…"
+    : "翻訳したいテキストを入力…";
+  renderDirection();
+  renderStyleControls(); // 翻訳=トーン、添削=シーン＋距離感
+}
+
+function setTask(task) {
+  if (task !== "translate" && task !== "proofread") return;
+  state.task = task;
+  renderTask();
+}
+
 function renderDirection() {
   els.sourceLang.textContent = LANG[state.source].label;
   els.targetLang.textContent = LANG[state.target].short;
-  // 結果ラベルは自動時は地球儀、確定時は対象言語の国旗（実言語は翻訳時に確定）
+  // 結果ラベル: 校正は対象言語、翻訳は先言語（auto は地球儀。実言語は実行時に確定）
+  const labelKey = state.task === "proofread" ? state.source : state.target;
   els.targetLabel.textContent =
-    state.target === "auto" ? "🌐" : LANG[state.target].short;
-  if (!state.busy) els.btnLabel.textContent = MODES[pendingMode()].action;
+    labelKey === "auto" ? "🌐" : LANG[labelKey].short;
+  if (!state.busy) els.btnLabel.textContent = MODES[state.task].action;
 }
 
 // 方向ピル（source/target 共通）を次の言語へ巡回
@@ -175,33 +278,166 @@ function cycleDirection(side) {
   renderDirection();
 }
 
-// TONES を単一の真実としてチップを描画する
-function renderToneButtons() {
-  els.toneSelect.innerHTML = Object.entries(TONES)
+// チップ列を描画する汎用ヘルパー（items: {key,emoji,label,title}[]）
+function renderChips(container, items, activeKey) {
+  container.innerHTML = items
     .map(
-      ([key, t]) =>
-        `<button class="tone-btn" data-tone="${key}" title="${t.title}">` +
-        `<span class="tone-emoji">${t.emoji}</span>${t.label}</button>`
+      (it) =>
+        `<button class="tone-btn${it.key === activeKey ? " is-active" : ""}" ` +
+        `data-chip="${it.key}" title="${it.title}">` +
+        `<span class="tone-emoji">${it.emoji}</span>${it.label}</button>`
     )
     .join("");
 }
 
-function renderTone() {
-  els.toneSelect.querySelectorAll(".tone-btn").forEach((btn) => {
-    btn.classList.toggle("is-active", btn.dataset.tone === state.tone);
+// 既存チップの選択だけを更新（再生成しない）
+function markActive(container, key) {
+  container.querySelectorAll(".tone-btn").forEach((b) =>
+    b.classList.toggle("is-active", b.dataset.chip === key)
+  );
+}
+
+// キー配列＋定義オブジェクトから renderChips 用の items を作る
+const keysToChips = (keys, defs) => keys.map((key) => ({ key, ...defs[key] }));
+
+// チップコンテナのクリックを委譲して data-chip を fn に渡す
+function onChipClick(container, fn) {
+  container.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tone-btn");
+    if (btn) fn(btn.dataset.chip);
   });
 }
 
-function setTone(tone) {
-  if (!TONES[tone]) return;
-  state.tone = tone;
-  renderTone();
-  chrome.storage.local.set({ tone });
+// モードに応じてスタイル選択 UI を描画する
+function renderStyleControls() {
+  if (state.task === "proofread") {
+    // シーン（一般／チャット／メール）
+    renderChips(els.toneSelect, keysToChips(Object.keys(PROOF_SCENES), PROOF_SCENES), state.proofScene);
+    // チャット/メールのときだけ距離感5段階を表示
+    const withLevels = PROOF_SCENES[state.proofScene].levels;
+    els.proofLevels.hidden = !withLevels;
+    if (withLevels) {
+      const levels = PROOF_LEVELS.map((lv, i) => ({ key: String(i), ...lv }));
+      renderChips(els.proofLevels, levels, String(state.proofLevel));
+    }
+  } else {
+    renderChips(els.toneSelect, keysToChips(TRANSLATE_TONE_KEYS, TONES), state.tone);
+    els.proofLevels.hidden = true;
+  }
+}
+
+function persistStyle() {
+  chrome.storage.local.set({
+    tone: state.tone,
+    proofScene: state.proofScene,
+    proofLevel: state.proofLevel,
+  });
+}
+
+// 翻訳トーン or 添削シーンの選択（#toneSelect のチップ）
+function setStyle(key) {
+  if (state.task === "proofread") {
+    if (!PROOF_SCENES[key]) return;
+    state.proofScene = key;
+    renderStyleControls(); // シーンで距離感の表示が変わるため全体を再描画
+  } else {
+    if (!TRANSLATE_TONE_KEYS.includes(key)) return;
+    state.tone = key;
+    markActive(els.toneSelect, key); // 選択だけ更新
+  }
+  persistStyle();
+}
+
+// 添削モードの距離感（5段階）の選択
+function setProofLevel(index) {
+  const i = Number(index);
+  if (!PROOF_LEVELS[i]) return;
+  state.proofLevel = i;
+  markActive(els.proofLevels, String(i)); // チップ構成は不変なので選択だけ更新
+  persistStyle();
 }
 
 function swapDirection() {
   [state.source, state.target] = [state.target, state.source];
   renderDirection();
+}
+
+// 選択状態を検証して state へ適用（保存復元・引き継ぎ復元で共通利用。無効値は無視）
+function applyValidatedSelection(sel = {}) {
+  if (sel.task === "translate" || sel.task === "proofread") state.task = sel.task;
+  if (LANG[sel.source]) state.source = sel.source;
+  if (LANG[sel.target]) state.target = sel.target;
+  if (TRANSLATE_TONE_KEYS.includes(sel.tone)) state.tone = sel.tone;
+  if (PROOF_SCENES[sel.proofScene]) state.proofScene = sel.proofScene;
+  if (PROOF_LEVELS[sel.proofLevel]) state.proofLevel = sel.proofLevel;
+}
+
+// 現在のセッション（選択・原文・結果）をスナップショットにする
+function captureSession() {
+  return {
+    task: state.task,
+    source: state.source,
+    target: state.target,
+    tone: state.tone,
+    proofScene: state.proofScene,
+    proofLevel: state.proofLevel,
+    input: els.inputText.value,
+    result: state.lastResult,
+    resultTitle: els.resultTitle.textContent,
+    targetLabel: els.targetLabel.textContent,
+  };
+}
+
+// 別ウィンドウ/サイドパネルへ引き継ぐためのスナップショットを保存
+function saveHandoff() {
+  return chrome.storage.local.set({ handoff: captureSession() });
+}
+
+// 引き継ぎスナップショットがあれば復元する（消費後は削除）
+async function restoreHandoff() {
+  const { handoff } = await chrome.storage.local.get("handoff");
+  if (!handoff) return false;
+  await chrome.storage.local.remove("handoff");
+
+  applyValidatedSelection(handoff);
+  renderTask();
+
+  // 原文
+  els.inputText.value = handoff.input || "";
+  autoGrow(els.inputText);
+
+  // 結果＋学習ポイント
+  if (handoff.result && handoff.result.translation) {
+    state.lastResult = handoff.result;
+    setOutput(handoff.result.translation);
+    renderInsights(handoff.result);
+    if (handoff.resultTitle) els.resultTitle.textContent = handoff.resultTitle;
+    if (handoff.targetLabel) els.targetLabel.textContent = handoff.targetLabel;
+  }
+  return true;
+}
+
+// 同じ UI を独立したポップアップウィンドウで開き、元のサイドパネルは閉じる
+async function openPopout() {
+  const win = await chrome.windows.getCurrent();
+  await saveHandoff(); // 現在の内容を引き継ぐ
+  await chrome.windows.create({
+    url: chrome.runtime.getURL(`sidepanel.html?window=1&owner=${win.id}`),
+    type: "popup",
+    width: 440,
+    height: 760,
+  });
+  window.close(); // メインのサイドパネルを閉じる
+}
+
+// ポップアップから元のウィンドウのサイドパネルに戻す
+function returnToSidePanel() {
+  if (!OWNER_WINDOW_ID) return;
+  saveHandoff(); // 内容を引き継ぐ（sidePanel.open はジェスチャ内で同期呼びするため await しない）
+  chrome.sidePanel
+    .open({ windowId: OWNER_WINDOW_ID })
+    .then(() => window.close())
+    .catch((e) => showError(`サイドパネルを開けませんでした: ${e.message}`));
 }
 
 function showError(msg) {
@@ -220,7 +456,7 @@ function setBusy(busy, mode) {
   els.btnEmoji.hidden = busy;
   els.btnLabel.textContent = busy
     ? MODES[mode].busy
-    : MODES[pendingMode()].action;
+    : MODES[state.task].action;
 }
 
 function setOutput(text, isPlaceholder = false) {
@@ -270,32 +506,48 @@ const RESPONSE_SCHEMA = {
   propertyOrdering: ["translation", "keyExpressions", "alternatives", "notes"],
 };
 
+// モードごとの文体指示を組み立てる
+// 翻訳=トーン、添削=シーン（＋チャット/メールは相手との距離感）
+function styleInstructionFor(mode, langName) {
+  if (mode !== "proofread") return TONES[state.tone].instruction;
+  const scene = PROOF_SCENES[state.proofScene];
+  let s = scene.instruction.replaceAll("{lang}", langName);
+  if (scene.levels) s += " " + PROOF_LEVELS[state.proofLevel].instruction;
+  return s;
+}
+
 // 翻訳/校正タスクの system instruction を組み立てる
 // （Gemini ベストプラクティス: タスク=system / データ=user、制約は末尾・肯定形・簡潔）
-function buildSystemInstruction(from, to) {
+function buildSystemInstruction(from, to, mode) {
   const fromName = LANG[from].name;
   const toName = LANG[to].name;
-  const toneInstruction = (TONES[state.tone] || TONES[DEFAULT_TONE]).instruction;
+  const styleInstruction = styleInstructionFor(mode, toName);
 
   // 両モード共通の保持ルール
   const preserve =
     `Keep names, numbers, URLs, code, @mentions, and emoji unchanged. ` +
     `Preserve the line breaks and paragraph structure.`;
 
-  // from===to: 同じ言語 → 翻訳ではなくネイティブ表現への校正
+  // 校正モード: 同じ言語のままネイティブ表現に整える
   const mainTask =
-    from === to
+    mode === "proofread"
       ? `You are an expert ${toName} editor and a language tutor for a Japanese-speaking user.\n\n` +
         `1) translation: Proofread and rewrite the user's ${toName} text into natural, native-sounding ${toName}. ` +
         `Fix grammar, word choice, and awkward phrasing while preserving the original meaning and intent.\n` +
-        `Style to aim for:\n${toneInstruction}\n` +
+        `Style to aim for:\n${styleInstruction}\n` +
         `${preserve} ` +
         `Put ONLY the corrected ${toName} text in this field — no labels, quotes, or notes.`
       : `You are an expert ${fromName}-to-${toName} translator and a language tutor for a Japanese-speaking user.\n\n` +
         `1) translation: Translate the user's text from ${fromName} to ${toName}, preserving meaning, intent, and nuance.\n` +
-        `Tone for the translation:\n${toneInstruction}\n` +
+        `Tone for the translation:\n${styleInstruction}\n` +
         `Write natural, fluent ${toName} with clear everyday words. ${preserve} ` +
         `Put ONLY the translated text in this field — no labels, quotes, or notes.`;
+
+  // 添削はポイントを最大5つまで、翻訳は3つ程度
+  const noteGuidance =
+    mode === "proofread"
+      ? `Provide up to 5 learning bullets IN TOTAL across the three sections combined (fewer is fine)`
+      : `Provide about 3 learning bullets IN TOTAL across the three sections combined`;
 
   return (
     mainTask +
@@ -306,8 +558,8 @@ function buildSystemInstruction(from, to) {
     `- notes: any other helpful commentary (nuance, grammar, register, what was improved, cultural points).\n\n` +
     `Rules (follow exactly):\n` +
     `- Write every learning-note bullet in Japanese, kept short.\n` +
-    `- Provide about 3 learning bullets IN TOTAL across the three sections combined — not 3 per section. ` +
-    `Distribute them however is most useful: they may all sit in one section (e.g. three keyExpressions), ` +
+    `- ${noteGuidance} — not that many per section. ` +
+    `Distribute them however is most useful: they may all sit in one section, ` +
     `or be spread across sections. Put each bullet in whichever section fits best, and leave the other arrays empty.\n` +
     `- Pick only the most valuable insights; if there is genuinely nothing worth noting, all three arrays may be empty.\n` +
     `- Return JSON matching the provided schema.`
@@ -315,7 +567,7 @@ function buildSystemInstruction(from, to) {
 }
 
 // ===== Gemini API 呼び出し =====
-async function callGemini(text, from, to) {
+async function callGemini(text, from, to, mode) {
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/` +
     `${encodeURIComponent(state.model)}:generateContent`;
@@ -332,7 +584,9 @@ async function callGemini(text, from, to) {
 
   // リクエスト不変部分は一度だけ組み立てる（再試行で作り直さない）
   const apiKey = sanitizeKey(state.apiKey);
-  const systemInstruction = { parts: [{ text: buildSystemInstruction(from, to) }] };
+  const systemInstruction = {
+    parts: [{ text: buildSystemInstruction(from, to, mode) }],
+  };
   const contents = [{ role: "user", parts: [{ text }] }];
 
   const post = (genConfig) =>
@@ -403,7 +657,7 @@ async function translate() {
   }
 
   const { from, to } = resolveDirection(text);
-  const mode = modeKey(from, to);
+  const mode = state.task;
   const m = MODES[mode];
   els.targetLabel.textContent = LANG[to].short;
   els.resultTitle.textContent = m.title;
@@ -412,10 +666,12 @@ async function translate() {
   setOutput(m.placeholder);
   clearInsights();
   try {
-    const result = await callGemini(text, from, to);
+    const result = await callGemini(text, from, to, mode);
+    state.lastResult = result; // 別ウィンドウ引き継ぎ用に保持
     setOutput(result.translation);
     renderInsights(result);
   } catch (e) {
+    state.lastResult = null;
     setOutput("", true);
     showError(e.userFacing ? e.message : `翻訳に失敗しました: ${e.message}`);
   } finally {
@@ -448,14 +704,18 @@ async function saveSettings() {
 }
 
 async function loadSettings() {
-  const { apiKey, model, tone } = await chrome.storage.local.get([
-    "apiKey",
-    "model",
-    "tone",
-  ]);
+  const { apiKey, model, tone, proofScene, proofLevel } =
+    await chrome.storage.local.get([
+      "apiKey",
+      "model",
+      "tone",
+      "proofScene",
+      "proofLevel",
+    ]);
   state.apiKey = apiKey || "";
   state.model = model || DEFAULT_MODEL;
-  state.tone = TONES[tone] ? tone : DEFAULT_TONE;
+  // 保存値を検証して復元（無効値は既定のまま）
+  applyValidatedSelection({ tone, proofScene, proofLevel });
 }
 
 // 右クリックメニューから渡されたテキストを取り込む
@@ -472,16 +732,26 @@ async function consumePendingText() {
 // ===== イベント =====
 function bindEvents() {
   els.settingsBtn.addEventListener("click", openSettings);
+  // ポップアップ時は「サイドパネルに戻す」、通常時は「別ウィンドウで開く」
+  if (IS_POPOUT) {
+    els.popoutBtn.textContent = "↩️";
+    els.popoutBtn.title = "サイドパネルに戻す";
+    els.popoutBtn.addEventListener("click", returnToSidePanel);
+  } else {
+    els.popoutBtn.addEventListener("click", openPopout);
+  }
   els.backBtn.addEventListener("click", closeSettings);
   els.saveSettingsBtn.addEventListener("click", saveSettings);
   els.sourceLang.addEventListener("click", () => cycleDirection("source"));
   els.targetLang.addEventListener("click", () => cycleDirection("target"));
   els.swapBtn.addEventListener("click", swapDirection);
-  // チップは動的生成のためコンテナへ委譲
-  els.toneSelect.addEventListener("click", (e) => {
-    const btn = e.target.closest(".tone-btn");
-    if (btn) setTone(btn.dataset.tone);
+  els.taskTabs.addEventListener("click", (e) => {
+    const btn = e.target.closest(".task-tab");
+    if (btn) setTask(btn.dataset.task);
   });
+  // チップ（動的生成）はコンテナへ委譲。data-chip を渡す
+  onChipClick(els.toneSelect, setStyle);
+  onChipClick(els.proofLevels, setProofLevel);
   els.translateBtn.addEventListener("click", translate);
   els.copyBtn.addEventListener("click", async () => {
     await navigator.clipboard.writeText(els.outputText.textContent);
@@ -520,10 +790,10 @@ function bindEvents() {
 // ===== 初期化 =====
 (async function init() {
   await loadSettings();
-  renderDirection();
-  renderToneButtons();
-  renderTone();
+  renderTask(); // タブ・言語・トーンをまとめて描画
   bindEvents();
   setOutput("", true);
-  await consumePendingText();
+  // 別ウィンドウ/サイドパネル切替で引き継いだ内容を復元。なければ右クリック取り込み
+  const restored = await restoreHandoff();
+  if (!restored) await consumePendingText();
 })();

@@ -16,20 +16,31 @@
     <div class="app">
       <!-- 翻訳ビュー -->
       <main id="translateView" class="view">
-        <!-- 方向切り替え -->
+        <!-- モード切替（翻訳 / 添削・校正） -->
+        <div class="task-tabs" id="taskTabs" role="tablist">
+          <button class="task-tab is-active" data-task="translate">🌐 翻訳</button>
+          <button class="task-tab" data-task="proofread">✍️ 添削・校正</button>
+        </div>
+
+        <!-- 言語選択（翻訳=元/先、校正=言語1つ） -->
         <div class="direction">
           <button class="lang-pill" id="sourceLang">✨ 自動判定</button>
           <button id="swapBtn" class="swap-btn" title="入れ替え" aria-label="言語を入れ替え">
             🔄
           </button>
           <button class="lang-pill" id="targetLang">🌐 自動</button>
+          <button id="popoutBtn" class="icon-btn" title="別ウィンドウで開く" aria-label="別ウィンドウで開く">
+            🪟
+          </button>
           <button id="settingsBtn" class="icon-btn" title="設定" aria-label="設定">
             ⚙️
           </button>
         </div>
 
-        <!-- ニュアンス（チップは sidepanel.js が TONES から描画） -->
+        <!-- ニュアンス／シーン（チップは sidepanel.js が描画） -->
         <div class="tone-select" id="toneSelect" role="group" aria-label="ニュアンス"></div>
+        <!-- 添削モードでチャット/メール選択時の相手との距離感（5段階） -->
+        <div class="tone-select" id="proofLevels" role="group" aria-label="相手との距離感" hidden></div>
 
         <!-- 入力 -->
         <section class="panel input-panel">
